@@ -23,7 +23,7 @@ SMTP_PASSWORD = os.environ.get(
 RUTA_DB = os.path.join(os.path.dirname(__file__), "..", "reportes.db")
 
 # Lista blanca de nombres de archivos HTML
-NOMBRE_HTML_VALIDO = re.compile(r"^\w[\w.-]*\.html$")
+NOMBRE_HTML_VALIDO = re.compile(r"^\w[\w.-]*\.html$", re.ASCII)
 
 
 def cargar_configuracion(ruta_config):
@@ -45,47 +45,59 @@ def buscar_reportes_cliente(nombre_cliente, ruta_db=RUTA_DB):
         conexion.close()
 
 
+
+DIRECTORIO_REPORTES = (
+    Path(__file__).resolve().parent.parent / "reportes"
+).resolve()
+
+
 def convertir_a_pdf(nombre_archivo):
-    """Convierte un reporte HTML a PDF usando la utilidad del sistema."""
+    """Convierte un reporte HTML local a PDF."""
 
     nombre = Path(nombre_archivo).name
 
-    if not NOMBRE_HTML_VALIDO.fullmatch(nombre):
+    if nombre != nombre_archivo or not NOMBRE_HTML_VALIDO.fullmatch(nombre):
         raise ValueError("Nombre de archivo no válido")
 
-    # Resolver las rutas para evitar argumentos inesperados
-    directorio = Path(nombre_archivo).parent.resolve()
-    entrada = (directorio / nombre).resolve()
-    salida = entrada.with_suffix(entrada.suffix + ".pdf")
+    entrada = (DIRECTORIO_REPORTES / nombre).resolve()
 
-    # Comprobar que el archivo de entrada existe y es un archivo normal
+    # Impedir que el archivo salga del directorio autorizado
+    if entrada.parent != DIRECTORIO_REPORTES:
+        raise ValueError("Ruta de archivo no permitida")
+
     if not entrada.is_file():
-        raise FileNotFoundError(f"No existe el archivo HTML: {entrada}")
+        raise FileNotFoundError("No existe el archivo HTML")
+
+    salida = entrada.with_suffix(".pdf")
 
     try:
-        resultado = subprocess.run(
+        subprocess.run(
             [
                 "wkhtmltopdf",
+                "--disable-local-file-access",
                 str(entrada),
                 str(salida)
             ],
             check=True,
             shell=False,
-            capture_output=True,
-            text=True
+            cwd=str(DIRECTORIO_REPORTES),
+            timeout=60
         )
-
-    except FileNotFoundError:
+    except FileNotFoundError as error:
         raise RuntimeError(
-            "wkhtmltopdf no está instalado en el sistema."
-        )
-
+            "wkhtmltopdf no está instalado"
+        ) from error
     except subprocess.CalledProcessError as error:
         raise RuntimeError(
-            f"Error al generar el PDF: {error.stderr}"
+            "No se pudo generar el PDF"
+        ) from error
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "Se agotó el tiempo de generación del PDF"
         ) from error
 
     return str(salida)
+
 
 
 def hash_password_legacy(password):
